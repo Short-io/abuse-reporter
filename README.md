@@ -56,7 +56,10 @@ tail -f /var/log/syslog | log-to-abuse
 | `--sender-name NAME` | Sender name | Abuse Reporter |
 | `--sender-org ORG` | Sender organization | System Administrator |
 | `--max-logs N` | Maximum log entries per IP | 50 |
+| `--threshold N` | Minimum occurrences for IP to be included | 2 |
 | `--json` | Output in JSON format | false |
+| `--output-dir DIR` | Directory to save emails | emails |
+| `--smtp-dsn DSN` | SMTP DSN to send emails (e.g., `smtp://user:pass@host:587`). If provided, emails are sent instead of saved to files | - |
 
 ## How It Works
 

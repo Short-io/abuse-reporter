@@ -14,6 +14,7 @@
 import { createInterface } from 'readline';
 import { mkdir, writeFile } from 'fs/promises';
 import { join } from 'path';
+import nodemailer from 'nodemailer';
 import { buildIPLogMap } from './ip-extractor.js';
 import { lookupIPs, groupByAbuseEmail } from './abuse-lookup.js';
 import {
@@ -37,6 +38,7 @@ function parseArgs() {
     help: false,
     json: false,
     outputDir: 'emails',
+    smtpDsn: null,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -68,6 +70,9 @@ function parseArgs() {
       case '--output-dir':
         options.outputDir = args[++i];
         break;
+      case '--smtp-dsn':
+        options.smtpDsn = args[++i];
+        break;
     }
   }
 
@@ -94,6 +99,8 @@ OPTIONS:
   --threshold N           Min occurrences for IP to be included (default: 2)
   --json                  Output in JSON format instead of text
   --output-dir DIR        Directory to save emails (default: emails)
+  --smtp-dsn DSN          SMTP DSN to send emails (e.g., smtp://user:pass@host:587)
+                          If provided, emails are sent instead of saved to files
 
 EXAMPLES:
   # Process auth logs
@@ -107,6 +114,11 @@ EXAMPLES:
 
   # Output JSON for further processing
   cat logs.txt | log-to-abuse --json > reports.json
+
+  # Send emails via SMTP
+  cat /var/log/auth.log | log-to-abuse \\
+    --smtp-dsn "smtp://user:pass@smtp.example.com:587" \\
+    --sender-email security@mycompany.com
 `);
 }
 
@@ -151,6 +163,38 @@ async function saveEmailsToFiles(emails, outputDir) {
   }
 
   return savedCount;
+}
+
+/**
+ * Send emails via SMTP
+ * @param {object[]} emails - Array of email objects
+ * @param {string} smtpDsn - SMTP connection DSN
+ * @returns {Promise<object>} - Send statistics
+ */
+async function sendEmails(emails, smtpDsn) {
+  const transporter = nodemailer.createTransport(smtpDsn);
+  const stats = { total: 0, success: 0, failed: 0, errors: [] };
+
+  for (const email of emails) {
+    try {
+      await transporter.sendMail({
+        from: email.from,
+        to: email.to,
+        subject: email.subject,
+        text: email.body,
+      });
+      stats.success++;
+      process.stderr.write(`  ✓ Sent to ${email.to}\n`);
+    } catch (error) {
+      stats.failed++;
+      stats.errors.push({ to: email.to, error: error.message });
+      process.stderr.write(`  ✗ Failed to send to ${email.to}: ${error.message}\n`);
+    }
+    stats.total++;
+  }
+
+  transporter.close();
+  return stats;
 }
 
 /**
@@ -241,10 +285,18 @@ async function main() {
   // Generate emails
   const emails = generateAllEmails(abuseGroups, ipLogMap, options);
 
-  // Save emails to files
-  process.stderr.write(`Saving emails to ${options.outputDir}/...\n`);
-  const savedStats = await saveEmailsToFiles(emails, options.outputDir);
-  process.stderr.write(`Saved ${savedStats.total} emails to ${Object.keys(savedStats.providers).length} provider directories\n`);
+  // Send or save emails
+  let emailStats;
+  if (options.smtpDsn) {
+    process.stderr.write(`Sending ${emails.length} emails via SMTP...\n`);
+    emailStats = await sendEmails(emails, options.smtpDsn);
+    process.stderr.write(`Sent ${emailStats.success}/${emailStats.total} emails (${emailStats.failed} failed)\n`);
+  } else {
+    process.stderr.write(`Saving emails to ${options.outputDir}/...\n`);
+    const savedStats = await saveEmailsToFiles(emails, options.outputDir);
+    emailStats = { total: savedStats.total, providers: savedStats.providers };
+    process.stderr.write(`Saved ${savedStats.total} emails to ${Object.keys(savedStats.providers).length} provider directories\n`);
+  }
 
   // Output results
   if (options.json) {
@@ -256,12 +308,14 @@ async function main() {
         uniqueIPs: uniqueIPs.length,
         abuseContacts: emails.length,
         unknownIPs: abuseGroups.get('unknown@unknown')?.length || 0,
-        savedFiles: savedStats.total,
-        providers: savedStats.providers,
+        ...(options.smtpDsn
+          ? { sent: emailStats.success, failed: emailStats.failed }
+          : { savedFiles: emailStats.total, providers: emailStats.providers }),
       },
-      outputDir: options.outputDir,
+      ...(options.smtpDsn ? {} : { outputDir: options.outputDir }),
       emails,
       unknownIPs: abuseGroups.get('unknown@unknown') || [],
+      ...(emailStats.errors?.length ? { sendErrors: emailStats.errors } : {}),
     };
     console.log(JSON.stringify(output, null, 2));
   } else {
@@ -274,8 +328,15 @@ async function main() {
     console.log(`Total log lines processed: ${lines.length}`);
     console.log(`Unique public IPs found: ${uniqueIPs.length}`);
     console.log(`Abuse reports generated: ${emails.length}`);
-    console.log(`Emails saved to: ${options.outputDir}/`);
-    console.log(`Provider directories: ${Object.keys(savedStats.providers).join(', ')}`);
+    if (options.smtpDsn) {
+      console.log(`Emails sent: ${emailStats.success}/${emailStats.total}`);
+      if (emailStats.failed > 0) {
+        console.log(`Failed: ${emailStats.failed}`);
+      }
+    } else {
+      console.log(`Emails saved to: ${options.outputDir}/`);
+      console.log(`Provider directories: ${Object.keys(emailStats.providers).join(', ')}`);
+    }
     console.log('');
 
     // Output each email
