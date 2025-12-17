@@ -10,10 +10,19 @@ A Node.js CLI tool that processes log streams, extracts unique IP addresses, loo
 ## Installation
 
 ```bash
-# Install dependencies
-yarn install
+# Install globally via npm
+npm install -g @short.io/abuse-reporter
 
-# Or link globally
+# Or install locally in a project
+npm install @short.io/abuse-reporter
+```
+
+### From source
+
+```bash
+git clone https://github.com/short-io/abuse-reporter.git
+cd abuse-reporter
+yarn install
 npm link
 ```
 
@@ -23,19 +32,19 @@ Pipe log data to stdin:
 
 ```bash
 # Basic usage
-cat /var/log/auth.log | node src/index.js
+cat /var/log/auth.log | log-to-abuse
 
 # With custom sender information
-cat /var/log/nginx/access.log | node src/index.js \
+cat /var/log/nginx/access.log | log-to-abuse \
   --sender-email security@mycompany.com \
   --sender-name "Security Team" \
   --sender-org "MyCompany Inc."
 
 # Output as JSON for further processing
-grep "Failed password" /var/log/auth.log | node src/index.js --json > reports.json
+grep "Failed password" /var/log/auth.log | log-to-abuse --json > reports.json
 
 # Process live logs (press Ctrl+C when done)
-tail -f /var/log/syslog | node src/index.js
+tail -f /var/log/syslog | log-to-abuse
 ```
 
 ## Options
