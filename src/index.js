@@ -12,6 +12,8 @@
  */
 
 import { createInterface } from 'readline';
+import { mkdir, writeFile } from 'fs/promises';
+import { join } from 'path';
 import { buildIPLogMap } from './ip-extractor.js';
 import { lookupIPs, groupByAbuseEmail } from './abuse-lookup.js';
 import {
@@ -31,8 +33,10 @@ function parseArgs() {
     senderName: 'Abuse Reporter',
     senderOrg: 'System Administrator',
     maxLogsPerIP: 50,
+    threshold: 2,
     help: false,
     json: false,
+    outputDir: 'emails',
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -55,8 +59,14 @@ function parseArgs() {
       case '--max-logs':
         options.maxLogsPerIP = parseInt(args[++i], 10);
         break;
+      case '--threshold':
+        options.threshold = parseInt(args[++i], 10);
+        break;
       case '--json':
         options.json = true;
+        break;
+      case '--output-dir':
+        options.outputDir = args[++i];
         break;
     }
   }
@@ -81,7 +91,9 @@ OPTIONS:
   --sender-name NAME      Set sender name (default: Abuse Reporter)
   --sender-org ORG        Set sender organization (default: System Administrator)
   --max-logs N            Max log entries per IP (default: 50)
+  --threshold N           Min occurrences for IP to be included (default: 2)
   --json                  Output in JSON format instead of text
+  --output-dir DIR        Directory to save emails (default: emails)
 
 EXAMPLES:
   # Process auth logs
@@ -96,6 +108,49 @@ EXAMPLES:
   # Output JSON for further processing
   cat logs.txt | log-to-abuse --json > reports.json
 `);
+}
+
+/**
+ * Extract provider domain from email address
+ * @param {string} email - Email address
+ * @returns {string} - Provider domain
+ */
+function getProviderFromEmail(email) {
+  const match = email.match(/@(.+)$/);
+  return match ? match[1] : 'unknown';
+}
+
+/**
+ * Save emails to files organized by provider
+ * @param {object[]} emails - Array of email objects
+ * @param {string} outputDir - Output directory path
+ */
+async function saveEmailsToFiles(emails, outputDir) {
+  const savedCount = { total: 0, providers: {} };
+
+  for (const email of emails) {
+    const provider = getProviderFromEmail(email.to);
+    const providerDir = join(outputDir, provider);
+
+    // Create provider directory if it doesn't exist
+    await mkdir(providerDir, { recursive: true });
+
+    // Generate filename from IPs and timestamp
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const ipSuffix = email.ips.slice(0, 3).join('_').replace(/\./g, '-');
+    const filename = `${timestamp}_${ipSuffix}.txt`;
+    const filepath = join(providerDir, filename);
+
+    // Write email content to file
+    const content = formatEmailForOutput(email);
+    await writeFile(filepath, content, 'utf-8');
+
+    // Track stats
+    savedCount.total++;
+    savedCount.providers[provider] = (savedCount.providers[provider] || 0) + 1;
+  }
+
+  return savedCount;
 }
 
 /**
@@ -155,6 +210,14 @@ async function main() {
   // Extract IPs and build log map
   process.stderr.write('Extracting IP addresses...\n');
   const ipLogMap = buildIPLogMap(lines);
+
+  // Filter IPs by threshold
+  const totalIPs = ipLogMap.size;
+  for (const [ip, logs] of ipLogMap) {
+    if (logs.length < options.threshold) {
+      ipLogMap.delete(ip);
+    }
+  }
   const uniqueIPs = Array.from(ipLogMap.keys());
 
   if (uniqueIPs.length === 0) {
@@ -162,7 +225,7 @@ async function main() {
     process.exit(0);
   }
 
-  process.stderr.write(`Found ${uniqueIPs.length} unique public IP addresses\n`);
+  process.stderr.write(`Found ${totalIPs} unique public IPs, ${uniqueIPs.length} with >= ${options.threshold} occurrences\n`);
 
   // Look up WHOIS information for each IP
   process.stderr.write('Looking up abuse contacts (this may take a while)...\n');
@@ -178,6 +241,11 @@ async function main() {
   // Generate emails
   const emails = generateAllEmails(abuseGroups, ipLogMap, options);
 
+  // Save emails to files
+  process.stderr.write(`Saving emails to ${options.outputDir}/...\n`);
+  const savedStats = await saveEmailsToFiles(emails, options.outputDir);
+  process.stderr.write(`Saved ${savedStats.total} emails to ${Object.keys(savedStats.providers).length} provider directories\n`);
+
   // Output results
   if (options.json) {
     // JSON output
@@ -188,7 +256,10 @@ async function main() {
         uniqueIPs: uniqueIPs.length,
         abuseContacts: emails.length,
         unknownIPs: abuseGroups.get('unknown@unknown')?.length || 0,
+        savedFiles: savedStats.total,
+        providers: savedStats.providers,
       },
+      outputDir: options.outputDir,
       emails,
       unknownIPs: abuseGroups.get('unknown@unknown') || [],
     };
@@ -203,6 +274,8 @@ async function main() {
     console.log(`Total log lines processed: ${lines.length}`);
     console.log(`Unique public IPs found: ${uniqueIPs.length}`);
     console.log(`Abuse reports generated: ${emails.length}`);
+    console.log(`Emails saved to: ${options.outputDir}/`);
+    console.log(`Provider directories: ${Object.keys(savedStats.providers).join(', ')}`);
     console.log('');
 
     // Output each email

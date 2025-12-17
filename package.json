@@ -1,5 +1,5 @@
 {
-  "name": "log-to-abuse-reports",
+  "name": "@short.io/log-to-abuse-reports",
   "version": "1.0.0",
   "description": "Extract IPs from log streams and generate abuse reports",
   "type": "module",
