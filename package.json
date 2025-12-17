@@ -1,0 +1,28 @@
+{
+  "name": "log-to-abuse-reports",
+  "version": "1.0.0",
+  "description": "Extract IPs from log streams and generate abuse reports",
+  "type": "module",
+  "main": "src/index.js",
+  "bin": {
+    "log-to-abuse": "./src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test src/**/*.test.js"
+  },
+  "keywords": [
+    "abuse",
+    "logs",
+    "ip",
+    "whois",
+    "security"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "whois-json": "^2.0.4"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
