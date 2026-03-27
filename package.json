@@ -20,7 +20,7 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "nodemailer": "^7.0.11",
+    "nodemailer": "^8.0.4",
     "whois-json": "^2.0.4"
   },
   "engines": {
